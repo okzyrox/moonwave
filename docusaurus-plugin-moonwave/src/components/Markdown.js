@@ -50,7 +50,7 @@ const autoLinkReferences = (typeLinks, baseUrl) => (node) => {
       const hashMatch = label.match(/#(.+)$/)
 
       if (name in typeLinks) {
-        let link = typeLinks[name]
+        let link = typeLinks[name].url
 
         if (link.startsWith(baseUrl)) {
           link = link.slice(baseUrl.length - 1)
@@ -69,7 +69,110 @@ const autoLinkReferences = (typeLinks, baseUrl) => (node) => {
     return node
   }
 
-  node.children = node.children.map(replaceLinkRefs)
+  if (node.children) {
+    node.children = node.children.map(replaceLinkRefs)
+  }
+}
+
+const formatKind = (kind) => {
+  if (!kind) {
+    return "Type"
+  }
+
+  return kind
+    .replace(/\btype\b/i, "type")
+    .replace(/^./, (char) => char.toUpperCase())
+}
+
+const isRobloxType = (info) => info.kind === "Roblox type"
+
+const buildTooltipNode = (info) => ({
+  type: "element",
+  tagName: "span",
+  properties: {
+    className: ["moonwave-type-link__tooltip"],
+  },
+  children: [
+    {
+      type: "element",
+      tagName: "span",
+      properties: {
+        className: ["moonwave-type-link__title"],
+      },
+      children: [{ type: "text", value: info.name }],
+    },
+    {
+      type: "element",
+      tagName: "span",
+      properties: {
+        className: ["moonwave-type-link__kind"],
+      },
+      children: [{ type: "text", value: formatKind(info.kind) }],
+    },
+    ...(info.desc
+      ? [
+          {
+            type: "element",
+            tagName: "span",
+            properties: {
+              className: ["moonwave-type-link__desc"],
+            },
+            children: [{ type: "text", value: info.desc }],
+          },
+        ]
+      : []),
+  ],
+})
+
+const decorateTypeLinks = (typeLinks) => (node) => {
+  const replaceAnchors = (child) => {
+    if (child.children) {
+      child.children = child.children.map(replaceAnchors)
+    }
+
+    if (child.type !== "element" || child.tagName !== "a") {
+      return child
+    }
+
+    const href = child.properties?.href
+
+    if (!href) {
+      return child
+    }
+
+    const hrefWithoutHash = href.replace(/#.*$/, "")
+    const info = Object.values(typeLinks).find(
+      (value) => value.url === hrefWithoutHash
+    )
+
+    if (!info || isRobloxType(info)) {
+      return child
+    }
+
+    return {
+      type: "element",
+      tagName: "span",
+      properties: {
+        className: ["moonwave-type-link"],
+      },
+      children: [
+        child,
+        buildTooltipNode(info),
+        {
+          type: "element",
+          tagName: "span",
+          properties: {
+            className: ["moonwave-type-link__tail"],
+          },
+          children: [],
+        },
+      ],
+    }
+  }
+
+  if (node.children) {
+    node.children = node.children.map(replaceAnchors)
+  }
 }
 
 // Backwards compatibility for Docusaurus V2 Admonitions
@@ -100,6 +203,7 @@ export default function Markdown({ content, inline }) {
       handlers: { ...remarkRehypeAdmonitions },
     })
     .use(() => linkTransformer(siteConfig.baseUrl))
+    .use(() => decorateTypeLinks(typeLinks))
     .use(rehypePrism)
     .use(format)
     .use(html)

@@ -104,24 +104,57 @@ const BADGES = {
       </svg>
     ),
   },
+  Deprecated: {
+    color: "#6f7787",
+    title: "This item is no longer supported.",
+    image: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="#6f7787"
+        role="img"
+        aria-label="This item is no longer supported."
+      >
+        <path d="M12 2 1 22h22L12 2zm0 6.5c.55 0 1 .45 1 1V14c0 .55-.45 1-1 1s-1-.45-1-1V9.5c0-.55.45-1 1-1zm0 9.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z" />
+      </svg>
+    ),
+  },
 }
 
-export default function Badge({ label }) {
-  const { color, image, title } = BADGES[label] ?? {
+export default function Badge({
+  label,
+  className,
+  title: customTitle,
+  description,
+  muted = false,
+}) {
+  const { color, image, title: defaultTitle } = BADGES[label] ?? {
     color: "red",
     image: <svg />,
     title: "",
   }
 
+  const badgeTitle = customTitle ?? defaultTitle
+
+  const tooltip = description ? (
+    <>
+      <strong>{badgeTitle}</strong>
+      <span>{description}</span>
+    </>
+  ) : (
+    badgeTitle
+  )
+
   return (
     <>
       <span
-        className={clsx(styles.badge)}
+        className={clsx(styles.badge, className)}
         style={{
           color,
+          opacity: muted ? 0.8 : 1,
         }}
       >
-        <span className={clsx(styles.badgeTooltip)}>{title}</span>
+        <span className={clsx(styles.badgeTooltip)}>{tooltip}</span>
         <span className={clsx(styles.badgeToolTipTail)}>
           {image} {label}
         </span>

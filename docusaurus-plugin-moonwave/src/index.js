@@ -9,6 +9,31 @@ const capitalize = (text) => text[0].toUpperCase() + text.substring(1)
 const breakCapitalWordsZeroWidth = (text) =>
   text.replace(/([A-Z])/g, "\u200B$1") // Adds a zero-width space before each capital letter. This way, the css word-break: break-word; rule can apply correctly
 
+const normalizeSectionName = (text) =>
+  text
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[-_]/g, " ")
+    .split(/\s+/)
+    .filter((part) => part.length > 0)
+    .map(capitalize)
+    .join(" ")
+
+const getGroupPath = (luaClass) => {
+  if (!luaClass?.group) {
+    return []
+  }
+
+  const path = []
+
+  if (luaClass.group.parent) {
+    path.push(luaClass.group.parent)
+  }
+
+  path.push(luaClass.group.name)
+
+  return path
+}
+
 const getFunctionCallOperator = (type) =>
   type === "static" ? "." : type === "method" ? ":" : ""
 
@@ -219,6 +244,113 @@ function processNestedItems(items, nameSet, filteredContent, listedNames) {
   return result
 }
 
+// A bit messy...
+function groupSidebarItems(items, luaClassByName) {
+  const result = []
+  const singleGroupBuckets = new Map()
+  const parentGroupBuckets = new Map()
+
+  const pushSingleGroup = (groupName, linkItem) => {
+    const bucketKey = `single:${groupName}`
+    if (!singleGroupBuckets.has(bucketKey)) {
+      const bucket = {
+        type: "category",
+        label: groupName,
+        collapsible: true,
+        collapsed: true,
+        className: "moonwave-group-category moonwave-group-category--single",
+        items: [],
+      }
+
+      singleGroupBuckets.set(bucketKey, bucket)
+      result.push(bucket)
+    }
+
+    singleGroupBuckets.get(bucketKey).items.push(linkItem)
+  }
+
+  const pushNestedGroup = (parentName, childName, linkItem) => {
+    const parentKey = `parent:${parentName}`
+
+    if (!parentGroupBuckets.has(parentKey)) {
+      const bucket = {
+        type: "category",
+        label: parentName,
+        collapsible: true,
+        collapsed: true,
+        className: "moonwave-group-category moonwave-group-category--parent",
+        items: [],
+      }
+
+      parentGroupBuckets.set(parentKey, bucket)
+      result.push(bucket)
+    }
+
+    const parentBucket = parentGroupBuckets.get(parentKey)
+    const childKey = `${parentKey}:${childName}`
+    if (!parentBucket.__childBuckets) {
+      parentBucket.__childBuckets = new Map()
+    }
+
+    if (!parentBucket.__childBuckets.has(childKey)) {
+      const childBucket = {
+        type: "category",
+        label: childName,
+        collapsible: true,
+        collapsed: false,
+        className: "moonwave-group-category moonwave-group-category--child",
+        items: [],
+      }
+
+      parentBucket.__childBuckets.set(childKey, childBucket)
+      parentBucket.items.push(childBucket)
+    }
+
+    parentBucket.__childBuckets.get(childKey).items.push(linkItem)
+  }
+
+  items.forEach((item) => {
+    if (item.type === "category" && item.items) {
+      result.push({
+        ...item,
+        items: groupSidebarItems(item.items, luaClassByName),
+      })
+      return
+    }
+
+    if (item.type !== "link" || !item.href?.startsWith("/api/")) {
+      result.push(item)
+      return
+    }
+
+    const className = item.href.slice("/api/".length)
+    const groupPath = getGroupPath(luaClassByName.get(className))
+
+    if (groupPath.length === 0) {
+      // Ungrouped
+      result.push(item)
+      return
+    }
+
+    if (groupPath.length === 1) {
+      // Single level group
+      pushSingleGroup(groupPath[0], item)
+      return
+    }
+
+    pushNestedGroup(groupPath[0], groupPath[1], item)
+  })
+
+  return result.map((item) => {
+    if (!item.__childBuckets) {
+      return item
+    }
+
+    const { __childBuckets, ...rest } = item
+    return rest
+  })
+}
+
 function parseApiCategories(luaClass, apiCategories) {
   const tocData = []
 
@@ -298,24 +430,36 @@ function parseApiCategories(luaClass, apiCategories) {
   return [...tocData]
 }
 
-async function generateTypeLinks(nameSet, luaClasses, baseUrl) {
-  const classNames = {}
-  nameSet.forEach((name) => (classNames[name] = `${baseUrl}api/${name}`))
+async function generateTypeLinks(luaClasses, baseUrl) {
+  const robloxTypes = await generateRobloxTypes()
 
-  const classTypesNames = {}
-  luaClasses
-    .filter((luaClass) => luaClass.types.length > 0)
-    .forEach((luaClass) =>
-      luaClass.types.forEach(
-        (type) =>
-          (classTypesNames[
-            type.name
-          ] = `${baseUrl}api/${luaClass.name}#${type.name}`)
-      )
-    )
+  const typeLinks = {}
 
-  const externalTypeNames = {}
+  Object.entries(robloxTypes).forEach(([name, url]) => {
+    typeLinks[name] = {
+      url,
+      name,
+      kind: "Roblox type",
+    }
+  })
+
   luaClasses.forEach((luaClass) => {
+    typeLinks[luaClass.name] = {
+      url: `${baseUrl}api/${luaClass.name}`,
+      name: luaClass.name,
+      kind: "class",
+      desc: luaClass.desc,
+    }
+
+    luaClass.types.forEach((type) => {
+      typeLinks[type.name] = {
+        url: `${baseUrl}api/${luaClass.name}#${type.name}`,
+        name: type.name,
+        kind: type.lua_type ? "type" : "interface",
+        desc: type.desc,
+      }
+    })
+
     const entries = [
       luaClass,
       ...luaClass.functions,
@@ -329,19 +473,14 @@ async function generateTypeLinks(nameSet, luaClasses, baseUrl) {
       )
       .forEach((entry) => {
         entry.external_types.forEach((type) => {
-          externalTypeNames[type.name] = type.url
+          typeLinks[type.name] = {
+            url: type.url,
+            name: type.name,
+            kind: "external type",
+          }
         })
       })
   })
-
-  const robloxTypes = await generateRobloxTypes()
-
-  const typeLinks = {
-    ...robloxTypes, // The Roblox types go first, as they can be overwritten if the user has created their own classes and types with identical names
-    ...classNames,
-    ...classTypesNames,
-    ...externalTypeNames,
-  }
 
   return typeLinks
 }
@@ -480,14 +619,7 @@ export default (context, options) => ({
             const nextDir = nextDirMatch[1]
 
             // convert kebab-case, snake_case, camelCase, PascalCase to Title Case
-            const title = nextDir
-              .replace(/(?<!-)([A-Z])/g, " $1")
-              .replace("-", " ")
-              .replace("_", " ")
-              .split(/\s+/)
-              .filter((str) => str.length > 0)
-              .map(capitalize)
-              .join(" ")
+            const title = normalizeSectionName(nextDir)
 
             const existingSection = classOrder.find(
               (section) => section.section === title
@@ -515,9 +647,18 @@ export default (context, options) => ({
       filteredContent
     )
 
+    const luaClassByName = new Map(
+      filteredContent.map((luaClass) => [luaClass.name, luaClass])
+    )
+
+    const groupedLuaClassNamesOrdered = groupSidebarItems(
+      allLuaClassNamesOrdered,
+      luaClassByName
+    )
+
     const sidebarClassNames = await createData(
       "sidebar.json",
-      JSON.stringify(allLuaClassNamesOrdered)
+      JSON.stringify(groupedLuaClassNamesOrdered)
     )
 
     const apiCategories = options.apiCategories
@@ -533,7 +674,6 @@ export default (context, options) => ({
     )
 
     const typeLinksData = await generateTypeLinks(
-      nameSet,
       filteredContent,
       baseUrl
     )

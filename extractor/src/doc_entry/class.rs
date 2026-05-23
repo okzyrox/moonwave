@@ -5,7 +5,7 @@ use crate::{
     doc_comment::{DocComment, OutputSource},
     realm::Realm,
     serde_util::is_false,
-    tags::{CustomTag, DeprecatedTag, ExternalTag, Tag},
+    tags::{CustomTag, DeprecatedTag, ExternalTag, GroupTag, Tag},
 };
 use serde::Serialize;
 
@@ -21,6 +21,8 @@ pub struct ClassDocEntry<'a> {
     pub tags: Vec<CustomTag<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_types: Vec<ExternalTag<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupTag<'a>>,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub realm: BTreeSet<Realm>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,6 +62,7 @@ impl<'a> ClassDocEntry<'a> {
             source,
             tags: Vec::new(),
             external_types: Vec::new(),
+            group: None,
             realm: BTreeSet::new(),
             private: false,
             unreleased: false,
@@ -76,6 +79,7 @@ impl<'a> ClassDocEntry<'a> {
             match tag {
                 Tag::Custom(tag) => doc_entry.tags.push(tag),
                 Tag::External(external_tag) => doc_entry.external_types.push(external_tag),
+                Tag::Group(group_tag) => doc_entry.group = Some(group_tag),
                 Tag::Deprecated(deprecated_tag) => doc_entry.deprecated = Some(deprecated_tag),
                 Tag::Since(since_tag) => doc_entry.since = Some(since_tag.version.to_string()),
                 Tag::Index(index_tag) => doc_entry.__index = index_tag.name.to_string(),

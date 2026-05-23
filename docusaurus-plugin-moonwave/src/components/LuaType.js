@@ -1,5 +1,5 @@
 import React, { useContext } from "react"
-import GenericLink from "./GenericLink.js"
+import TypeLink from "./TypeLink.js"
 import { TypeLinksContext } from "./LuaClass.js"
 import styles from "./styles.module.css"
 import { Op, PrOp } from "./Syntax.js"
@@ -268,14 +268,15 @@ function Token({ token, depth }) {
     case "luaType":
       const sanitizedToken = token.luaType.replace(/\W/g, "")
       if (sanitizedToken in typeLinks) {
+        const link = typeLinks[sanitizedToken]
         return (
           <code className={styles.blue}>
-            <GenericLink
-              to={typeLinks[sanitizedToken]}
+            <TypeLink
+              link={link}
               style={{ textDecoration: "underline", color: "inherit" }}
             >
               {token.luaType}
-            </GenericLink>
+            </TypeLink>
           </code>
         )
       }

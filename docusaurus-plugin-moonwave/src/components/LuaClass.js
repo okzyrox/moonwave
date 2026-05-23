@@ -20,6 +20,7 @@ import LuaFunction from "./LuaFunction.js"
 import LuaProp from "./LuaProp.js"
 import LuaTypeDef from "./LuaTypeDef.js"
 import Markdown from "./Markdown.js"
+import SummarySection from "./SummarySection.js"
 import styles from "./styles.module.css"
 import Tag from "./Tag.js"
 
@@ -352,6 +353,8 @@ export default function LuaClass({
                           )}
 
                           <Markdown content={luaClass.desc} />
+
+                          <SummarySection luaClass={luaClass} />
                         </header>
 
                         {SECTIONS.map((section) => (
