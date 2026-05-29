@@ -5,7 +5,7 @@ use crate::{
     doc_comment::{DocComment, OutputSource},
     realm::Realm,
     serde_util::is_false,
-    tags::{CustomTag, DeprecatedTag, ExternalTag, GroupTag, Tag},
+    tags::{CustomTag, DeprecatedTag, ExternalTag, GroupDescriptionTag, GroupTag, Tag},
 };
 use serde::Serialize;
 
@@ -23,6 +23,8 @@ pub struct ClassDocEntry<'a> {
     pub external_types: Vec<ExternalTag<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupTag<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "groupDescription")]
+    pub group_description: Option<GroupDescriptionTag<'a>>,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub realm: BTreeSet<Realm>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +65,7 @@ impl<'a> ClassDocEntry<'a> {
             tags: Vec::new(),
             external_types: Vec::new(),
             group: None,
+            group_description: None,
             realm: BTreeSet::new(),
             private: false,
             unreleased: false,
@@ -80,6 +83,7 @@ impl<'a> ClassDocEntry<'a> {
                 Tag::Custom(tag) => doc_entry.tags.push(tag),
                 Tag::External(external_tag) => doc_entry.external_types.push(external_tag),
                 Tag::Group(group_tag) => doc_entry.group = Some(group_tag),
+                Tag::GroupDescription(group_description_tag) => doc_entry.group_description = Some(group_description_tag),
                 Tag::Deprecated(deprecated_tag) => doc_entry.deprecated = Some(deprecated_tag),
                 Tag::Since(since_tag) => doc_entry.since = Some(since_tag.version.to_string()),
                 Tag::Index(index_tag) => doc_entry.__index = index_tag.name.to_string(),
@@ -98,6 +102,29 @@ impl<'a> ClassDocEntry<'a> {
                     doc_entry.realm.insert(Realm::Plugin);
                 }
                 _ => unused_tags.push(tag),
+            }
+        }
+
+        // Mainly just some checks
+        if let Some(group_description) = &doc_entry.group_description {
+            let group = if let Some(group) = doc_entry.group.as_ref() {
+                group
+            } else {
+                return Err(Diagnostics::from(vec![group_description.source.diagnostic(
+                    "@groupdescription must be paired with @group on the same class",
+                )]));
+            };
+
+            let same_parent = match (&group.parent, &group_description.parent) {
+                (None, None) => true,
+                (Some(left), Some(right)) => left == right,
+                _ => false,
+            };
+
+            if !same_parent || group.name != group_description.name {
+                return Err(Diagnostics::from(vec![group_description.source.diagnostic(
+                    "@groupdescription must describe the same group named by @group",
+                )]));
             }
         }
 

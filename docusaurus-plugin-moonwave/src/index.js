@@ -1,5 +1,5 @@
-import { resolve } from "path"
-import { existsSync } from "fs"
+import { resolve, relative, sep } from "path"
+import { existsSync, readdirSync, readFileSync } from "fs"
 import { promisify } from "util"
 const exec = promisify(require("child_process").exec)
 import { generateRobloxTypes } from "./generateRobloxTypes.js"
@@ -32,6 +32,247 @@ const getGroupPath = (luaClass) => {
   path.push(luaClass.group.name)
 
   return path
+}
+const getGroupUrlKey = (groupPath) => groupPath.join("\u0000")
+const getGroupPageUrl = (groupPath) => `/api/groups/${groupPath.map((segment) => encodeURIComponent(segment)).join("/")}`
+const getGroupSidebarUrl = (groupPath, groupIndex) => {
+  const groupNode = groupIndex.get(getGroupUrlKey(groupPath))
+
+  if (!groupNode) {
+    return undefined
+  }
+
+  return groupNode.slug
+}
+
+const toNormalTitle = (text) =>
+  text
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[-_]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase())
+
+const toGuideRouteUrl = (projectDir, filePath) => {
+  const docsRootDir = resolve(projectDir, "docs")
+  const relPath = relative(docsRootDir, filePath)
+  const noExt = relPath.replace(/\.(mdx?)$/, "")
+  const normalized = noExt
+    .split(sep)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")
+
+  return `/api/guide/${normalized.replace(/\/index$/, "")}`.replace(/\/index$/, "")
+}
+
+const toServerApiRoutePath = (projectDir, filePath) => {
+  const docsRootDir = resolve(projectDir, "docs")
+  const relPath = relative(docsRootDir, filePath).replace(/\.openapi\.json$/, "")
+  const segments = relPath.split(sep).filter(Boolean)
+  return `/api/server/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`
+}
+
+const getEndpointAnchor = (method, endpointPath) =>
+  `${method}-${endpointPath}`
+    .toLowerCase()
+    .replace(/\{([^}]+)\}/g, "$1")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+const listFiles = (dirPath) => {
+  if (!existsSync(dirPath)) {
+    return []
+  }
+
+  return readdirSync(dirPath, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = resolve(dirPath, entry.name)
+    if (entry.isDirectory()) {
+      return listFiles(fullPath)
+    }
+    return [fullPath]
+  })
+}
+
+const splitFrontmatter = (rawText) => {
+  const frontmatterMatch = rawText.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/) 
+
+  if (!frontmatterMatch) {
+    return { body: rawText, frontmatter: {} }
+  }
+
+  const frontmatter = {}
+  frontmatterMatch[1]
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const separatorIndex = line.indexOf(":")
+      if (separatorIndex < 0) {
+        return
+      }
+
+      const key = line.slice(0, separatorIndex).trim()
+      const value = line.slice(separatorIndex + 1).trim()
+      frontmatter[key] = value
+    })
+
+  return {
+    frontmatter,
+    body: rawText.slice(frontmatterMatch[0].length),
+  }
+}
+
+const getFirstMarkdownHeading = (content) => {
+  const headingMatch = content.match(/^\s*#\s+(.+)$/m)
+  if (!headingMatch) {
+    return undefined
+  }
+
+  return headingMatch[1]
+    .replace(/`+/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .trim()
+}
+
+const toHeadingLabel = (rawHeading) =>
+  rawHeading
+    .replace(/`+/g, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .trim()
+
+const toHeadingUrl = (heading, usedSlugs) => {
+  const baseSlug = toHeadingLabel(heading)
+    .toLowerCase()
+    .replace(/["'`]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+
+  const mainSlug = baseSlug || "section"
+  const occurrence = usedSlugs.get(mainSlug) || 0
+  usedSlugs.set(mainSlug, occurrence + 1)
+
+  return occurrence === 0 ? mainSlug : `${mainSlug}-${occurrence}`
+}
+
+const getSubheadings = (content) => {
+  const headings = []
+  const usedSlugs = new Map()
+  let inFence = false
+
+  content.split(/\r?\n/).forEach((line) => {
+    if (/^```/.test(line.trim())) {
+      inFence = !inFence
+      return
+    }
+
+    if (inFence) {
+      return
+    }
+
+    const heading = line.match(/^\s*(#{2,6})\s+(.+)$/)
+    if (!heading) {
+      return
+    }
+
+    const label = toHeadingLabel(heading[2])
+    if (!label) {
+      return
+    }
+
+    headings.push({
+      label,
+      level: headingMatch[1].length,
+      anchor: toHeadingUrl(label, usedSlugs),
+    })
+  })
+
+  return headings
+}
+
+const parseGuideEntry = (projectDir, filePath) => {
+  const docsRootDir = resolve(projectDir, "docs")
+  const relativePath = relative(docsRootDir, filePath)
+  const raw = readFileSync(filePath, "utf8")
+  const { frontmatter, body } = splitFrontmatter(raw)
+
+  const parsedPosition = Number(frontmatter.sidebar_position)
+  const sidebarPosition = Number.isFinite(parsedPosition)
+    ? parsedPosition
+    : Number.POSITIVE_INFINITY
+
+  const fallbackLabel = toNormalTitle(relativePath.replace(/\.(mdx?)$/, ""))
+  const headingLabel = getFirstMarkdownHeading(body)
+  const label = headingLabel || fallbackLabel
+
+  return {
+    filePath,
+    relativePath,
+    routePath: toGuideRouteUrl(projectDir, filePath),
+    label,
+    content: body,
+    headings: getSubheadings(body),
+    sidebarPosition,
+  }
+}
+
+const buildGuideEntries = (projectDir) => {
+  const docsRootDir = resolve(projectDir, "docs")
+  if (!existsSync(docsRootDir)) {
+    return []
+  }
+
+  return listFiles(docsRootDir)
+    .filter((filePath) => /\.(mdx?)$/.test(filePath))
+    .filter((filePath) => !filePath.endsWith(".openapi.json"))
+    .map((filePath) => parseGuideEntry(projectDir, filePath))
+    .sort((left, right) => {
+      if (left.sidebarPosition !== right.sidebarPosition) {
+        return left.sidebarPosition - right.sidebarPosition
+      }
+
+      return left.label.localeCompare(right.label)
+    })
+}
+
+const buildServerApiEntries = (projectDir) => {
+  const docsRootDir = resolve(projectDir, "docs")
+  if (!existsSync(docsRootDir)) {
+    return []
+  }
+
+  return listFiles(docsRootDir)
+    
+    .filter((filePath) => filePath.endsWith(".openapi.json"))
+    .map((filePath) => {
+      const raw = JSON.parse(readFileSync(filePath, "utf8"))
+      if (!raw.openapi) {
+        throw new Error(
+          `Moonwave: ${relative(projectDir, filePath)} must be a valid OpenAPI Swagger document`
+        )
+      }
+
+      const operations = [] // TODO: Parse.
+      // Need to decide how I want it to look
+      // Although Id probably display the name of the operation alongside the method in the sidebar
+      const routePath = toServerApiRoutePath(projectDir, filePath)
+      const label = toNormalTitle(
+        relative(docsRootDir, filePath).replace(/\.openapi\.json$/, "")
+      )
+
+      return {
+        filePath,
+        label,
+        routePath,
+        operations: operations.sort((left, right) =>
+          left.title.localeCompare(right.title)
+        ),
+      }
+    })
+    .sort((left, right) => left.label.localeCompare(right.label))
 }
 
 const getFunctionCallOperator = (type) =>
@@ -245,7 +486,7 @@ function processNestedItems(items, nameSet, filteredContent, listedNames) {
 }
 
 // A bit messy...
-function groupSidebarItems(items, luaClassByName) {
+function groupSidebarItems(items, luaClassByName, groupIndex) {
   const result = []
   const singleGroupBuckets = new Map()
   const parentGroupBuckets = new Map()
@@ -253,11 +494,13 @@ function groupSidebarItems(items, luaClassByName) {
   const pushSingleGroup = (groupName, linkItem) => {
     const bucketKey = `single:${groupName}`
     if (!singleGroupBuckets.has(bucketKey)) {
+      const groupPath = [groupName]
       const bucket = {
         type: "category",
         label: groupName,
         collapsible: true,
         collapsed: true,
+        href: getGroupSidebarUrl(groupPath, groupIndex),
         className: "moonwave-group-category moonwave-group-category--single",
         items: [],
       }
@@ -273,11 +516,13 @@ function groupSidebarItems(items, luaClassByName) {
     const parentKey = `parent:${parentName}`
 
     if (!parentGroupBuckets.has(parentKey)) {
+      const parentPath = [parentName]
       const bucket = {
         type: "category",
         label: parentName,
         collapsible: true,
         collapsed: true,
+        href: getGroupSidebarUrl(parentPath, groupIndex),
         className: "moonwave-group-category moonwave-group-category--parent",
         items: [],
       }
@@ -293,11 +538,13 @@ function groupSidebarItems(items, luaClassByName) {
     }
 
     if (!parentBucket.__childBuckets.has(childKey)) {
+      const childPath = [parentName, childName]
       const childBucket = {
         type: "category",
         label: childName,
         collapsible: true,
         collapsed: false,
+        href: getGroupSidebarUrl(childPath, groupIndex),
         className: "moonwave-group-category moonwave-group-category--child",
         items: [],
       }
@@ -313,7 +560,7 @@ function groupSidebarItems(items, luaClassByName) {
     if (item.type === "category" && item.items) {
       result.push({
         ...item,
-        items: groupSidebarItems(item.items, luaClassByName),
+        items: groupSidebarItems(item.items, luaClassByName, groupIndex),
       })
       return
     }
@@ -485,6 +732,101 @@ async function generateTypeLinks(luaClasses, baseUrl) {
   return typeLinks
 }
 
+// Groups listing
+function buildGroupTree(luaClasses) {
+  // Might not be the fastest
+  // Maybe the extractor could build this ahead of time
+  // Although I hate rust so
+  // No... 
+  const tempGroups = new Map()
+  const groupIndex = new Map()
+
+  const ensureNode = (groupPath) => {
+    let currentMap = tempGroups
+    let currentItem = null
+
+    groupPath.forEach((groupName, index) => {
+      const currentPath = groupPath.slice(0, index + 1)
+      const pathKey = getGroupUrlKey(currentPath)
+
+      if (!currentMap.has(pathKey)) {
+        const node = {
+          name: groupName,
+          label: groupName,
+          path: currentPath,
+          slug: getGroupPageUrl(currentPath),
+          description: "",
+          descriptionSource: null,
+          classes: [],
+          children: new Map(),
+        }
+
+        currentMap.set(pathKey, node)
+      }
+
+      currentItem = currentMap.get(pathKey)
+      currentMap = currentItem.children
+    })
+
+    return currentItem
+  }
+
+  for (const luaClass of luaClasses) {
+    const groupPath = getGroupPath(luaClass)
+
+    if (groupPath.length === 0) {
+      continue
+    }
+
+    const groupNode = ensureNode(groupPath)
+    groupNode.classes.push(luaClass)
+
+    // Ideally should be done in the extractor
+    if (luaClass.groupDescription) {
+      if (
+        groupNode.descriptionSource &&
+        groupNode.descriptionSource !== luaClass.name
+      ) {
+        throw new Error(
+          `Moonwave: cannot use @groupdescription more than once`
+        )
+      }
+
+      groupNode.description = luaClass.desc
+      groupNode.descriptionSource = luaClass.name
+    }
+  }
+
+  const sortGroup = (node) => {
+    const children = [...node.children.values()]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map(sortGroup)
+
+    const sortedNode = {
+      name: node.name,
+      label: node.label,
+      path: node.path,
+      slug: node.slug,
+      description: node.description,
+      descriptionSource: node.descriptionSource,
+      classes: [...node.classes].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      ),
+      children,
+    }
+
+    groupIndex.set(getGroupUrlKey(sortedNode.path), sortedNode)
+
+    return sortedNode
+  }
+
+  const groups = [...tempGroups.values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map(sortGroup)
+
+  return { groups, groupIndex }
+}
+
 function validateNestedItems(items, path) {
   items.forEach((item, index) => {
     const currentPath = `${path}[${index}]`
@@ -579,6 +921,7 @@ export default (context, options) => ({
   },
 
   async contentLoaded({ content, actions: { addRoute, createData } }) {
+    const basePath = options.projectDir || resolve(process.cwd(), "..")
     const filteredContent = content.filter((luaClass) => !luaClass.ignore)
 
     filteredContent.sort((a, b) => {
@@ -651,14 +994,85 @@ export default (context, options) => ({
       filteredContent.map((luaClass) => [luaClass.name, luaClass])
     )
 
-    const groupedLuaClassNamesOrdered = groupSidebarItems(
+    // for better sidebar grouping consistency
+    const { groups: groupTrees, groupIndex } = buildGroupTree(filteredContent)
+
+    const groupedClassNames = groupSidebarItems(
       allLuaClassNamesOrdered,
-      luaClassByName
+      luaClassByName,
+      groupIndex
     )
+
+    const guideEntries = buildGuideEntries(basePath)
+    const serverApiEntries = buildServerApiEntries(basePath)
+
+    // A bit rough..
+    // Maybe i'd make it configurable via the config file or something
+    // Although idk how i'd structure it without just hardcoding like so
+    const apiReferenceSection = {
+      type: "category",
+      label: "API Reference",
+      className: "moonwave-section-header",
+      collapsible: true,
+      collapsed: false,
+      items: groupedClassNames,
+    }
+
+    const serverApiSection = {
+      type: "category",
+      label: "Server APIs",
+      className: "moonwave-section-header",
+      collapsible: true,
+      collapsed: true,
+      items: serverApiEntries.map((entry) => ({
+        type: "category",
+        label: entry.label,
+        collapsible: true,
+        collapsed: true,
+        href: entry.routePath,
+        items: entry.operations.map((operation) => ({
+          type: "link",
+          href: `${entry.routePath}#${operation.anchor}`,
+          label: operation.title,
+        })),
+      })),
+    }
+
+    const sidebarEntries = [
+      {
+        type: "category",
+        label: "Guide",
+        className: "moonwave-section-header",
+        collapsible: true,
+        collapsed: false,
+        items: guideEntries.map((entry) =>
+          entry.headings.length > 0
+            ? { // scuffed
+                type: "category",
+                label: entry.label,
+                collapsible: true,
+                collapsed: true,
+                href: entry.routePath,
+                items: entry.headings.map((heading) => ({
+                  type: "link",
+                  href: `${entry.routePath}#${heading.anchor}`,
+                  label: heading.label,
+                })),
+              }
+            : {
+                type: "link",
+                href: entry.routePath,
+                label: entry.label,
+              }
+        ),
+      },
+      apiReferenceSection,
+      serverApiSection,
+    ]
 
     const sidebarClassNames = await createData(
       "sidebar.json",
-      JSON.stringify(groupedLuaClassNamesOrdered)
+      JSON.stringify(sidebarEntries)
     )
 
     const apiCategories = options.apiCategories
@@ -692,8 +1106,60 @@ export default (context, options) => ({
       },
     })
 
+    for (const entry of guideEntries) {
+      const entryIndex = guideEntries.findIndex(
+        (guideEntry) => guideEntry.routePath === entry.routePath
+      )
+
+      const previous =
+        entryIndex > 0
+          ? {
+              title: guideEntries[entryIndex - 1].label,
+              permalink: guideEntries[entryIndex - 1].routePath,
+            }
+          : null
+
+      const next =
+        entryIndex < guideEntries.length - 1
+          ? {
+              title: guideEntries[entryIndex + 1].label,
+              permalink: guideEntries[entryIndex + 1].routePath,
+            }
+          : null
+
+      const sourceUrl = options.sourceUrl?.replace(/\/$/, "")
+      // remaking `docs` entries urls into the apis entries
+      // so that they can be on the same plage...
+      const guideDataUrl = await createData(
+        `guide-${entry.relativePath
+          .replace(/\\/g, "-")
+          .replace(/\.(mdx?)$/, "")
+          .replace(/[^a-z0-9]+/gi, "-")
+          .toLowerCase()}.json`,
+        JSON.stringify({
+          ...entry,
+          previous,
+          next,
+          editUrl: sourceUrl
+            ? `${sourceUrl}/docs/${entry.relativePath.replace(/\\/g, "/")}`
+            : null,
+        })
+      )
+
+      addRoute({
+        path: `${baseUrl}${entry.routePath.slice(1)}`,
+        component: resolve(__dirname, "components/GuidePage.js"),
+        modules: {
+          guide: guideDataUrl,
+          sidebarClassNames,
+          typeLinks,
+        },
+        exact: true,
+      })
+    }
+
     for (const luaClass of filteredContent) {
-      const apiDataPath = await createData(
+      const apiDataUrl = await createData(
         `${luaClass.name}.json`,
         JSON.stringify(luaClass)
       )
@@ -713,11 +1179,61 @@ export default (context, options) => ({
         path: `${baseUrl}api/${luaClass.name}`,
         component: resolve(__dirname, "components/LuaClass.js"),
         modules: {
-          luaClass: apiDataPath,
+          luaClass: apiDataUrl,
           sidebarClassNames,
           typeLinks,
           tocData,
           options: pluginOptions,
+        },
+        exact: true,
+      })
+    }
+
+    const updateGroupsPages = async (groupNodes) => {
+      for (const groupNode of groupNodes) {
+        const groupDataPath = await createData(
+          `group-${groupNode.path.map((segment) => encodeURIComponent(segment)).join("__")}.json`,
+          JSON.stringify(groupNode)
+        )
+        // seems to break groups with spaces in their names
+        // would recommend just using a `-` in place
+
+        addRoute({
+          path: `${baseUrl}${groupNode.slug.slice(1)}`,
+          component: resolve(__dirname, "components/GroupPage.js"),
+          modules: {
+            group: groupDataPath,
+            sidebarClassNames,
+            typeLinks,
+          },
+          exact: true,
+        })
+
+        if (groupNode.children.length > 0) {
+          await updateGroupsPages(groupNode.children)
+        }
+      }
+    }
+
+    await updateGroupsPages(groupTrees)
+
+    for (const entry of serverApiEntries) {
+      const apiDataUrl = await createData(
+        `server-api-${relative(projectDir, entry.filePath)
+          .replace(/\\/g, "-")
+          .replace(/\.openapi\.json$/, "")
+          .replace(/[^a-z0-9]+/gi, "-")
+          .toLowerCase()}.json`,
+        JSON.stringify(entry)
+      )
+
+      addRoute({
+        path: `${baseUrl}${entry.routePath.slice(1)}`,
+        component: resolve(__dirname, "components/ServerApiPage.js"),
+        modules: {
+          api: apiDataUrl,
+          sidebarClassNames,
+          typeLinks,
         },
         exact: true,
       })

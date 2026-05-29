@@ -175,6 +175,61 @@ const decorateTypeLinks = (typeLinks) => (node) => {
   }
 }
 
+const headingText = (node) => {
+  if (!node) {
+    return ""
+  }
+
+  if (node.type === "text") {
+    return node.value || ""
+  }
+
+  if (!node.children) {
+    return ""
+  }
+
+  return node.children.map(headingText).join("")
+}
+
+const headingSlugBase = (text) =>
+  text
+    .toLowerCase()
+    .replace(/["'`]/g, "")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-") || "section"
+
+const addHeadingIds = () => (root) => {
+  const slugCounts = new Map()
+
+  const visit = (node) => {
+    if (!node || typeof node !== "object") {
+      return
+    }
+
+    if (
+      node.type === "element" &&
+      /^h[1-6]$/.test(node.tagName || "")
+    ) {
+      node.properties = node.properties || {}
+
+      if (!node.properties.id) {
+        const text = headingText(node)
+        const base = headingSlugBase(text)
+        const count = slugCounts.get(base) || 0
+        slugCounts.set(base, count + 1)
+        node.properties.id = count === 0 ? base : `${base}-${count}`
+      }
+    }
+
+    if (node.children) {
+      node.children.forEach(visit)
+    }
+  }
+
+  visit(root)
+}
+
 // Backwards compatibility for Docusaurus V2 Admonitions
 function convertAdmonitions(content) {
   const blocksToConvert =
@@ -189,7 +244,7 @@ function convertAdmonitions(content) {
 
 export default function Markdown({ content, inline }) {
   const { siteConfig } = useDocusaurusContext()
-  const typeLinks = useContext(TypeLinksContext)
+  const typeLinks = useContext(TypeLinksContext) || {}
 
   content = convertAdmonitions(content)
 
@@ -203,6 +258,7 @@ export default function Markdown({ content, inline }) {
       handlers: { ...remarkRehypeAdmonitions },
     })
     .use(() => linkTransformer(siteConfig.baseUrl))
+    .use(addHeadingIds)
     .use(() => decorateTypeLinks(typeLinks))
     .use(rehypePrism)
     .use(format)

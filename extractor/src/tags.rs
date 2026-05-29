@@ -25,7 +25,7 @@ pub use custom::CustomTag;
 pub use error::ErrorTag;
 pub use external::ExternalTag;
 pub use field::FieldTag;
-pub use group::GroupTag;
+pub use group::{GroupDescriptionTag, GroupTag};
 pub use function::FunctionTag;
 pub use index::IndexTag;
 pub use interface::InterfaceTag;
@@ -101,6 +101,7 @@ define_tags! {
     Index(IndexTag),
     External(ExternalTag),
     Group(GroupTag),
+    GroupDescription(GroupDescriptionTag),
 
     // Unimplemented:
     // Link,
@@ -150,6 +151,7 @@ impl<'a> TryFrom<Span<'a>> for Tag<'a> {
             "@class" => ClassTag::parse(tag_text()?).map(Tag::Class),
             "@external" => ExternalTag::parse(tag_text()?).map(Tag::External),
             "@group" => GroupTag::parse(tag_text()?).map(Tag::Group),
+            "@groupdescription" => GroupDescriptionTag::parse(tag_text()?).map(Tag::GroupDescription),
             "@function" => FunctionTag::parse(tag_text()?, FunctionType::Static).map(Tag::Function),
             "@method" => FunctionTag::parse(tag_text()?, FunctionType::Method).map(Tag::Function),
             "@deprecated" => DeprecatedTag::parse(tag_text()?).map(Tag::Deprecated),

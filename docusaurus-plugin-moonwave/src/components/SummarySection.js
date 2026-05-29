@@ -45,8 +45,17 @@ const EventIcon = () => (
 const renderLuaTypes = (items) => {
   if (!items || items.length === 0) {
     return <span className={styles.summaryMuted}>()</span>
+    // Was debating either `nil` or just `()`
   }
+  // No brackets..
+  if (items.length === 1) {
+    return <LuaType code={items[0].lua_type} />
+  }  
 
+  // TODO:
+  // Representation of multiple types looks a bit scuffed with the spacing
+  // And long types arent encased in a single code block, they have multiple inside a span
+  // Which doesnt look right
   return (
     <>
       <span>(</span>
