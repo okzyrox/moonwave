@@ -1003,7 +1003,8 @@ export default (context, options) => ({
       groupIndex
     )
 
-    const guideEntries = buildGuideEntries(basePath)
+    // const guideEntries = buildGuideEntries(basePath)
+    const guideEntries = []
     const serverApiEntries = buildServerApiEntries(basePath)
 
     // A bit rough..
