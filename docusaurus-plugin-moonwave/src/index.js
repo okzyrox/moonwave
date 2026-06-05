@@ -185,7 +185,7 @@ const getSubheadings = (content) => {
 
     headings.push({
       label,
-      level: headingMatch[1].length,
+      level: heading[1].length,
       anchor: toHeadingUrl(label, usedSlugs),
     })
   })
