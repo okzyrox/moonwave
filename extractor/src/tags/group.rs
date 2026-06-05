@@ -19,13 +19,8 @@ fn parse_group_path<'a>(span: Span<'a>) -> Result<(Option<Span<'a>>, Span<'a>), 
         }
     }
 
-    if name.as_str().contains('>')
-        || name.as_str().contains('/')
-        || name.as_str().contains("::")
-    {
-        return Err(span.diagnostic(
-            "@group only supports a parent group and a child group",
-        ));
+    if name.as_str().contains('>') || name.as_str().contains('/') || name.as_str().contains("::") {
+        return Err(span.diagnostic("@group only supports a parent group and a child group"));
     }
 
     if name.as_str().is_empty() {
